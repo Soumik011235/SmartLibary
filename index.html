@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Library System – IoT</title>
+
+  <!-- Google Fonts "Inter" (system fonts are the fallback, see style.css) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+
+  <!-- html5-qrcode: camera-based QR scanner (Student Portal + Librarian Return) -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <!-- qrcodejs: generates QR codes for new books and the printable grid -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- Supabase JS client: database + authentication (falls back to localStorage demo mode if unavailable) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <!-- NOTE: Camera access requires HTTPS or http://localhost.
+       Opening this file via file:// may block the camera. Run a local server
+       (e.g. `python -m http.server`) or use the manual Book ID input. -->
+
+  <header class="app-header no-print">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">📚</span>
+      <h1>Smart Library System – IoT</h1>
+    </div>
+    <div class="header-actions">
+      <span id="status-badge" class="badge badge-warning" role="status">Offline Demo Mode</span>
+      <span id="user-chip" class="user-chip hidden"></span>
+      <button type="button" id="logout-btn" class="btn btn-ghost btn-sm hidden">Logout</button>
+    </div>
+  </header>
+
+  <!-- Tab bar: only visible after login, and only for roles with more than one tab -->
+  <nav id="app-nav" class="tab-nav no-print hidden" aria-label="Main navigation">
+    <div class="tablist" role="tablist" aria-label="Portals">
+      <button type="button" role="tab" id="tab-student" class="tab-btn" data-tab="student" aria-selected="true" aria-controls="panel-student">
+        <span aria-hidden="true">🎓</span><span>Student Portal</span>
+      </button>
+      <button type="button" role="tab" id="tab-librarian" class="tab-btn" data-tab="librarian" aria-selected="false" aria-controls="panel-librarian" tabindex="-1">
+        <span aria-hidden="true">🧑‍💼</span><span>Librarian Portal</span>
+      </button>
+      <button type="button" role="tab" id="tab-qrgrid" class="tab-btn" data-tab="qrgrid" aria-selected="false" aria-controls="panel-qrgrid" tabindex="-1">
+        <span aria-hidden="true">🖨️</span><span>Printable QR Grid</span>
+      </button>
+    </div>
+  </nav>
+
+  <main id="main" class="container">
+
+    <!-- ================= LOGIN / SIGN-UP SCREEN ================= -->
+    <section id="auth-screen" class="auth-wrap" aria-labelledby="auth-title">
+      <article class="card auth-card">
+        <div class="auth-logo" aria-hidden="true">📚</div>
+        <p class="auth-welcome">Welcome! Choose your portal to continue.</p>
+
+        <div class="role-switch" role="group" aria-label="Select portal">
+          <button type="button" class="role-btn active" data-role="student" aria-pressed="true">🎓 Student</button>
+          <button type="button" class="role-btn" data-role="librarian" aria-pressed="false">🧑‍💼 Librarian</button>
+        </div>
+
+        <h2 id="auth-title">Student login</h2>
+        <form id="auth-form" novalidate>
+          <div class="form-stack">
+            <div class="field hidden" id="auth-name-wrap">
+              <label for="auth-name">Full Name</label>
+              <input type="text" id="auth-name" autocomplete="name">
+            </div>
+            <div class="field">
+              <label for="auth-email">Email</label>
+              <input type="email" id="auth-email" required autocomplete="email">
+            </div>
+            <div class="field">
+              <label for="auth-password">Password</label>
+              <input type="password" id="auth-password" required minlength="6" autocomplete="current-password">
+            </div>
+            <div class="field hidden" id="auth-code-wrap">
+              <label for="auth-code">Librarian Access Code</label>
+              <input type="password" id="auth-code" autocomplete="off">
+            </div>
+          </div>
+          <p id="auth-error" class="auth-error hidden" role="alert"></p>
+          <button type="submit" id="auth-submit" class="btn btn-primary btn-block">Login</button>
+        </form>
+        <p id="auth-toggle-wrap" class="auth-toggle">
+          <button type="button" id="auth-toggle-mode" class="link-btn">New student? Create an account</button>
+        </p>
+        <p id="auth-hint" class="note auth-hint hidden"></p>
+      </article>
+    </section>
+
+    <!-- ================= APP CONTENT (after login) ================= -->
+    <div id="app-content" class="hidden">
+
+      <!-- ================= TAB 1: STUDENT PORTAL ================= -->
+      <section id="panel-student" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-student" tabindex="-1">
+        <article class="card">
+          <h2>Scan Book QR</h2>
+          <div id="qr-reader" class="qr-reader" aria-label="QR scanner viewport"></div>
+          <div class="btn-row">
+            <button type="button" id="start-scan" class="btn btn-primary">Start Scanner</button>
+            <button type="button" id="stop-scan" class="btn btn-secondary">Stop Scanner</button>
+          </div>
+          <div class="inline-form">
+            <label for="manual-id">Enter Book ID manually</label>
+            <div class="btn-row">
+              <input type="text" id="manual-id" placeholder="e.g. LIB-0001" autocomplete="off">
+              <button type="button" id="lookup-btn" class="btn btn-accent">Lookup</button>
+            </div>
+          </div>
+        </article>
+
+        <article id="book-panel" class="card hidden" aria-live="polite">
+          <h2>Book Information</h2>
+          <div class="book-info">
+            <div class="cover" aria-hidden="true">📘</div>
+            <dl class="book-details">
+              <dt>Title</dt><dd id="info-title"></dd>
+              <dt>Book ID</dt><dd id="info-id"></dd>
+              <dt>Category</dt><dd id="info-category"></dd>
+              <dt>Prerequisites</dt><dd id="info-prereq"></dd>
+              <dt>Rating</dt><dd><span id="info-rating" class="stars"></span></dd>
+              <dt>Availability</dt><dd><span id="info-availability" class="badge"></span></dd>
+            </dl>
+          </div>
+          <button type="button" id="proceed-issue" class="btn btn-primary">Proceed to Issue</button>
+        </article>
+
+        <article id="issue-section" class="card hidden">
+          <h2>Book Issue Form</h2>
+          <div id="issue-summary" class="summary-box" aria-label="Selected book summary"></div>
+          <form id="issue-form" novalidate>
+            <fieldset class="form-grid">
+              <legend>Student details</legend>
+              <div class="field">
+                <label for="student-name">Student Name</label>
+                <input type="text" id="student-name" required autocomplete="name">
+              </div>
+              <div class="field">
+                <label for="enrollment-no">Enrollment No</label>
+                <input type="text" id="enrollment-no" required>
+              </div>
+              <div class="field">
+                <label for="roll-no">Roll No</label>
+                <input type="text" id="roll-no" required>
+              </div>
+              <div class="field">
+                <label for="branch">Branch</label>
+                <select id="branch" required>
+                  <option value="">Select branch</option>
+                  <option>CSE</option><option>IT</option><option>ECE</option>
+                  <option>EEE</option><option>ME</option><option>CE</option><option>Other</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="semester">Semester</label>
+                <select id="semester" required><option value="">Select semester</option></select>
+              </div>
+              <div class="field">
+                <label for="email">Email</label>
+                <input type="email" id="email" required autocomplete="email">
+              </div>
+              <div class="field">
+                <label for="issue-date">Issue Date</label>
+                <input type="date" id="issue-date" required>
+              </div>
+              <div class="field">
+                <label for="return-date">Return Date (auto)</label>
+                <input type="date" id="return-date" readonly>
+              </div>
+            </fieldset>
+            <button type="submit" id="issue-submit" class="btn btn-primary">Issue Book</button>
+          </form>
+        </article>
+
+        <article id="issue-confirmation" class="card summary-box success hidden" role="status" tabindex="-1"></article>
+
+        <article class="card">
+          <h2>My Issued Books</h2>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>Book</th><th>Issued</th><th>Due</th><th>Status</th></tr>
+              </thead>
+              <tbody id="my-issues-body"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <!-- ================= TAB 2: LIBRARIAN PORTAL ================= -->
+      <section id="panel-librarian" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-librarian" tabindex="-1">
+        <div class="subtabs" role="group" aria-label="Librarian sections">
+          <button type="button" class="btn btn-secondary subtab-btn active" data-subtab="manage" aria-pressed="true">Manage Books</button>
+          <button type="button" class="btn btn-secondary subtab-btn" data-subtab="return" aria-pressed="false">Return Book</button>
+        </div>
+
+        <!-- A. Manage Books -->
+        <div id="sub-manage">
+          <article class="card">
+            <h2>Add New Book</h2>
+            <form id="add-book-form" novalidate>
+              <fieldset class="form-grid">
+                <legend>Book details</legend>
+                <div class="field">
+                  <label for="book-title">Title</label>
+                  <input type="text" id="book-title" required>
+                </div>
+                <div class="field">
+                  <label for="book-author">Author</label>
+                  <input type="text" id="book-author" required>
+                </div>
+                <div class="field">
+                  <label for="book-category">Category</label>
+                  <select id="book-category" required>
+                    <option value="">Select category</option>
+                    <option>Computer Science</option><option>Electronics</option><option>Mechanical</option>
+                    <option>Civil</option><option>Mathematics</option><option>Physics</option>
+                    <option value="__custom">Other (custom)…</option>
+                  </select>
+                </div>
+                <div class="field hidden" id="custom-category-wrap">
+                  <label for="book-category-custom">Custom Category</label>
+                  <input type="text" id="book-category-custom">
+                </div>
+                <div class="field">
+                  <label for="book-prereq">Prerequisites</label>
+                  <input type="text" id="book-prereq" placeholder="None">
+                </div>
+                <div class="field">
+                  <label for="book-rating">Rating (0–5)</label>
+                  <input type="number" id="book-rating" min="0" max="5" step="0.1" value="4" required>
+                </div>
+                <div class="field">
+                  <label for="book-copies">Total Copies</label>
+                  <input type="number" id="book-copies" min="1" step="1" value="1" required>
+                </div>
+              </fieldset>
+              <button type="submit" id="add-book-submit" class="btn btn-primary">Generate Book &amp; QR</button>
+            </form>
+
+            <div id="qr-result" class="qr-result hidden" aria-live="polite">
+              <p>Book ID: <strong id="new-book-id"></strong></p>
+              <div id="qr-preview" class="qr-box"></div>
+              <div><button type="button" id="download-qr" class="btn btn-accent">Download QR (PNG)</button></div>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Inventory</h2>
+            <div class="toolbar">
+              <label class="sr-only" for="inventory-search">Search books</label>
+              <input type="search" id="inventory-search" placeholder="Search title, author or ID">
+              <label class="sr-only" for="inventory-category">Filter by category</label>
+              <select id="inventory-category"><option value="">All categories</option></select>
+              <label class="sr-only" for="inventory-sort">Sort by</label>
+              <select id="inventory-sort">
+                <option value="title">Sort: Title</option>
+                <option value="category">Sort: Category</option>
+                <option value="rating">Sort: Rating</option>
+                <option value="available">Sort: Availability</option>
+              </select>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>ID</th><th>Title</th><th>Author</th><th>Category</th><th>Rating</th><th>Copies</th><th>Status</th><th>Action</th></tr>
+                </thead>
+                <tbody id="inventory-body"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <!-- B. Return Book -->
+        <div id="sub-return" class="hidden">
+          <article class="card">
+            <h2>Return Book</h2>
+            <div id="return-reader" class="qr-reader" aria-label="Return QR scanner viewport"></div>
+            <div class="btn-row">
+              <button type="button" id="return-start" class="btn btn-primary">Start Scanner</button>
+              <button type="button" id="return-stop" class="btn btn-secondary">Stop Scanner</button>
+            </div>
+            <div class="inline-form">
+              <label for="return-id">Enter Book ID</label>
+              <div class="btn-row">
+                <input type="text" id="return-id" placeholder="e.g. LIB-0001" autocomplete="off">
+                <button type="button" id="return-lookup" class="btn btn-accent">Find Issue</button>
+              </div>
+            </div>
+            <div id="return-record" class="summary-box hidden" aria-live="polite">
+              <div id="return-details"></div>
+              <button type="button" id="return-confirm-btn" class="btn btn-primary">Mark as Returned</button>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2>Issue Records</h2>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Issue ID</th><th>Book</th><th>Student</th><th>Issued</th><th>Due</th><th>Status</th></tr>
+                </thead>
+                <tbody id="issues-body"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ================= TAB 3: PRINTABLE QR GRID ================= -->
+      <section id="panel-qrgrid" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-qrgrid" tabindex="-1">
+        <article class="card">
+          <h2 class="no-print">Printable QR Grid</h2>
+          <p class="note no-print">For testing purposes: scan these codes with the Student Portal scanner.</p>
+          <button type="button" id="print-btn" class="btn btn-primary no-print">Print QR Sheet</button>
+          <div id="qr-grid" class="qr-grid"></div>
+        </article>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast-container" class="toast-container no-print" aria-live="polite"></div>
+
+  <!-- Confirmation modal (delete / return) -->
+  <div id="modal" class="modal hidden no-print" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-message">
+    <div class="modal-box">
+      <h3 id="modal-title">Confirm</h3>
+      <p id="modal-message"></p>
+      <div class="btn-row">
+        <button type="button" id="modal-cancel" class="btn btn-ghost">Cancel</button>
+        <button type="button" id="modal-confirm" class="btn btn-danger">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="app-footer no-print">
+    <p>Smart Library System in IoT · Project credits: Team Members, Department, Institute · © 2026</p>
+  </footer>
+
+  <script src="script.js" defer></script>
+</body>
+</html>
